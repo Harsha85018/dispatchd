@@ -1,0 +1,10 @@
+# WAL and runtime state
+*.wal
+*.log
+
+# build output
+dispatchd
+/bin/
+
+# macOS
+.DS_Store
