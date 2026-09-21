@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
+	"errors"
 
 	"github.com/Harsha85018/dispatchd/internal/job"
 )
 
+var (
+	ErrNotFound  = errors.New("job not found")
+	ErrLeaseLost = errors.New("lease no longer held by this worker")
+)
 // Store is a durable, WAL-backed store for jobs.
 // Every mutation is appended to a log file before being applied in memory,
 // so state can be rebuilt by replaying the log after a crash.
@@ -78,6 +83,19 @@ func (s *Store) Put(j *job.Job) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if err := s.appendWAL(j); err != nil {
+		return err
+	}
+
+	cp := *j
+	s.jobs[j.ID] = &cp
+	return nil
+}
+
+
+// appendWAL writes the job to the log and fsyncs. The caller must already
+// hold s.mu. The in-memory map is assumed to already reference this job.
+func (s *Store) appendWAL(j *job.Job) error {
 	entry := walEntry{Op: "put", Job: j}
 	line, err := json.Marshal(entry)
 	if err != nil {
@@ -88,15 +106,8 @@ func (s *Store) Put(j *job.Job) error {
 	if _, err := s.walFile.Write(line); err != nil {
 		return err
 	}
-	if err := s.walFile.Sync(); err != nil {
-		return err
-	}
-
-	cp := *j
-	s.jobs[j.ID] = &cp
-	return nil
+	return s.walFile.Sync()
 }
-
 
 // Get returns a copy of the job with the given ID, or nil if it doesn't exist.
 // A copy is returned so callers cannot mutate shared state outside the lock.
