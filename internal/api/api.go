@@ -39,6 +39,7 @@ type LeaseRequest struct {
 type CompleteRequest struct {
 	JobID    string `json:"job_id"`
 	WorkerID string `json:"worker_id"`
+	LeaseToken string `json:"lease_token"`
 	Success  bool   `json:"success"`
 	Error    string `json:"error,omitempty"`
 }
@@ -47,6 +48,7 @@ type CompleteRequest struct {
 type RenewRequest struct {
 	JobID    string `json:"job_id"`
 	WorkerID string `json:"worker_id"`
+	LeaseToken string `json:"lease_token"`
 }
 
 
@@ -174,7 +176,7 @@ func (s *Server) handleComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.store.Complete(req.JobID, req.WorkerID, req.Success, req.Error)
+	err := s.store.Complete(req.JobID, req.WorkerID, req.LeaseToken, req.Success, req.Error)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "job not found")
@@ -209,7 +211,7 @@ func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.store.Renew(req.JobID, req.WorkerID, s.leaseDuration)
+	err := s.store.Renew(req.JobID, req.WorkerID, req.LeaseToken, s.leaseDuration)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "job not found")

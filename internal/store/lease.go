@@ -2,6 +2,8 @@ package store
 
 import (
 	"time"
+	"crypto/rand"
+	"encoding/hex"
 
 	"github.com/Harsha85018/dispatchd/internal/job"
 )
@@ -30,10 +32,16 @@ func (s *Store) Lease(workerID string, duration time.Duration) (*job.Job, error)
 			continue
 		}
 
+		token, err := newLeaseToken()
+		if err != nil {
+			return nil, err
+		}
+
 		expiry := time.Now().UTC().Add(duration)
 
 		j.Status = job.StatusLeased
 		j.LeasedBy = workerID
+		j.LeaseToken = token
 		j.LeaseExpiry = &expiry
 		j.Attempts++
 		j.UpdatedAt = time.Now().UTC()
@@ -52,7 +60,7 @@ func (s *Store) Lease(workerID string, duration time.Duration) (*job.Job, error)
 // Complete records the terminal (or retry) outcome of a leased job.
 // It verifies the caller still holds the lease before applying the change,
 // so a worker whose lease already expired cannot clobber a reassigned job.
-func (s *Store) Complete(id, workerID string, success bool, errMsg string) error {
+func (s *Store) Complete(id, workerID, token string, success bool, errMsg string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -60,11 +68,12 @@ func (s *Store) Complete(id, workerID string, success bool, errMsg string) error
 	if !ok {
 		return ErrNotFound
 	}
-	if j.LeasedBy != workerID {
+	if j.LeasedBy != workerID || j.LeaseToken != token {
 		return ErrLeaseLost
 	}
 
 	j.LeasedBy = ""
+	j.LeaseToken = ""
 	j.LeaseExpiry = nil
 	j.UpdatedAt = time.Now().UTC()
 
@@ -99,6 +108,7 @@ func (s *Store) ReapExpired() ([]string, error) {
 		}
 
 		j.LeasedBy = ""
+		j.LeaseToken = ""
 		j.LeaseExpiry = nil
 		j.UpdatedAt = now
 
@@ -133,7 +143,7 @@ func dependenciesSatisfied(j *job.Job, statusByID map[string]job.Status) bool {
 // long-running job avoids being reaped: the worker heartbeats while it works,
 // and only stops if it dies. Returns ErrLeaseLost if the worker no longer
 // holds the lease, which tells it to abandon the work.
-func (s *Store) Renew(id, workerID string, duration time.Duration) error {
+func (s *Store) Renew(id, workerID, token string, duration time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -141,7 +151,7 @@ func (s *Store) Renew(id, workerID string, duration time.Duration) error {
 	if !ok {
 		return ErrNotFound
 	}
-	if j.Status != job.StatusLeased || j.LeasedBy != workerID {
+	if j.Status != job.StatusLeased || j.LeasedBy != workerID || j.LeaseToken != token {
 		return ErrLeaseLost
 	}
 
@@ -150,4 +160,16 @@ func (s *Store) Renew(id, workerID string, duration time.Duration) error {
 	j.UpdatedAt = time.Now().UTC()
 
 	return s.appendWAL(j)
+}
+
+// newLeaseToken returns a random token identifying one specific lease.
+// Worker ID alone is not enough: the same worker can re-lease a job it
+// previously lost, and a stale result from the earlier attempt would
+// otherwise pass validation.
+func newLeaseToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }

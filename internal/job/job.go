@@ -23,6 +23,7 @@ type Job struct {
 	DependsOn   []string          `json:"depends_on"`    // job IDs that must succeed before this one runs
 	Attempts    int               `json:"attempts"`
 	LeasedBy    string    `json:"leased_by,omitempty"`
+	LeaseToken  string    `json:"lease_token,omitempty"`
 	LeaseExpiry *time.Time `json:"lease_expiry,omitempty"`
 	MaxAttempts int               `json:"max_attempts"`
 	CreatedAt   time.Time         `json:"created_at"`

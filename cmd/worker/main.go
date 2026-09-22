@@ -55,7 +55,7 @@ func main() {
 
 		handler, ok := registry.Get(j.Type)
 		if !ok {
-			report(client, id, j.ID, false, "no handler registered for job type")
+			report(client, id, j.ID, j.LeaseToken, false, "no handler registered for job type")
 			continue
 		}
 
@@ -63,8 +63,8 @@ func main() {
 		// aren't reaped out from under a healthy worker
 		stop := make(chan struct{})
 		lost := make(chan struct{})
-		go heartbeat(client, id, j.ID, *heartbeatInterval, stop, lost)
-
+		go heartbeat(client, id, j.ID, j.LeaseToken, *heartbeatInterval, stop, lost)
+		
 		runErr := handler(j)
 		close(stop)
 
@@ -79,12 +79,12 @@ func main() {
 
 		if runErr != nil {
 			log.Printf("worker %s: job %s failed: %v", id, j.ID, runErr)
-			report(client, id, j.ID, false, runErr.Error())
+			report(client, id, j.ID, j.LeaseToken, false, runErr.Error())
 			continue
 		}
 
 		log.Printf("worker %s: job %s succeeded", id, j.ID)
-		report(client, id, j.ID, true, "")
+		report(client, id, j.ID, j.LeaseToken, true, "")
 	}
 }
 
@@ -117,12 +117,13 @@ func lease(client *http.Client, id string) (*job.Job, error) {
 }
 
 // report tells the server the outcome of a leased job.
-func report(client *http.Client, workerID, jobID string, success bool, errMsg string) {
+func report(client *http.Client, workerID, jobID, token string, success bool, errMsg string) {
 	payload := map[string]interface{}{
-		"job_id":    jobID,
-		"worker_id": workerID,
-		"success":   success,
-		"error":     errMsg,
+		"job_id":      jobID,
+		"worker_id":   workerID,
+		"lease_token": token,
+		"success":     success,
+		"error":       errMsg,
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -151,10 +152,11 @@ func report(client *http.Client, workerID, jobID string, success bool, errMsg st
 // renew extends this worker's lease on a job. It returns false if the
 // lease is gone, which means the job was reaped and reassigned while we
 // were still working on it.
-func renew(client *http.Client, workerID, jobID string) bool {
+func renew(client *http.Client, workerID, jobID, token string) bool {
 	body, err := json.Marshal(map[string]string{
-		"job_id":    jobID,
-		"worker_id": workerID,
+		"job_id":      jobID,
+		"worker_id":   workerID,
+		"lease_token": token,
 	})
 	if err != nil {
 		return false
@@ -169,6 +171,9 @@ func renew(client *http.Client, workerID, jobID string) bool {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusOK {
+		log.Printf("worker %s: renewed lease on %s", workerID, jobID)
+	}
 	return resp.StatusCode == http.StatusOK
 }
 
@@ -176,7 +181,7 @@ func renew(client *http.Client, workerID, jobID string) bool {
 // heartbeat renews the lease every interval until stop is closed.
 // If a renewal shows the lease is lost, it closes lost so the caller
 // can discard the result.
-func heartbeat(client *http.Client, workerID, jobID string, interval time.Duration, stop <-chan struct{}, lost chan<- struct{}) {
+func heartbeat(client *http.Client, workerID, jobID, token string, interval time.Duration, stop <-chan struct{}, lost chan<- struct{}) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -185,7 +190,7 @@ func heartbeat(client *http.Client, workerID, jobID string, interval time.Durati
 		case <-stop:
 			return
 		case <-ticker.C:
-			if !renew(client, workerID, jobID) {
+			if !renew(client, workerID, jobID, token) {
 				log.Printf("worker %s: lost lease on %s mid-execution", workerID, jobID)
 				close(lost)
 				return
