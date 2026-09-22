@@ -128,3 +128,26 @@ func dependenciesSatisfied(j *job.Job, statusByID map[string]job.Status) bool {
 	}
 	return true
 }
+
+// Renew extends the lease on a job the worker still holds. This is how a
+// long-running job avoids being reaped: the worker heartbeats while it works,
+// and only stops if it dies. Returns ErrLeaseLost if the worker no longer
+// holds the lease, which tells it to abandon the work.
+func (s *Store) Renew(id, workerID string, duration time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	j, ok := s.jobs[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if j.Status != job.StatusLeased || j.LeasedBy != workerID {
+		return ErrLeaseLost
+	}
+
+	expiry := time.Now().UTC().Add(duration)
+	j.LeaseExpiry = &expiry
+	j.UpdatedAt = time.Now().UTC()
+
+	return s.appendWAL(j)
+}

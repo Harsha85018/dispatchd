@@ -17,6 +17,7 @@ var (
 	serverURL = flag.String("server", "http://localhost:8080", "dispatchd server URL")
 	workerID  = flag.String("id", "", "unique worker id (defaults to hostname+pid)")
 	pollWait  = flag.Duration("poll", 500*time.Millisecond, "how long to wait when no work is available")
+	heartbeatInterval = flag.Duration("heartbeat", 3*time.Second, "how often to renew the lease while running a job")
 )
 
 func main() {
@@ -32,6 +33,7 @@ func main() {
 	registry.Register("extract", job.SimulatedHandler(0.0))
 	registry.Register("transform", job.SimulatedHandler(0.3))
 	registry.Register("load", job.SimulatedHandler(0.0))
+	registry.Register("slow", slowHandler(30*time.Second))
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	log.Printf("worker %s started, polling %s", id, *serverURL)
@@ -57,7 +59,24 @@ func main() {
 			continue
 		}
 
+		// heartbeat the lease while the handler runs, so long jobs
+		// aren't reaped out from under a healthy worker
+		stop := make(chan struct{})
+		lost := make(chan struct{})
+		go heartbeat(client, id, j.ID, *heartbeatInterval, stop, lost)
+
 		runErr := handler(j)
+		close(stop)
+
+		// if the lease was lost mid-execution, the job has already been
+		// reassigned — reporting now would be a stale write
+		select {
+		case <-lost:
+			log.Printf("worker %s: discarding result for %s (lease lost)", id, j.ID)
+			continue
+		default:
+		}
+
 		if runErr != nil {
 			log.Printf("worker %s: job %s failed: %v", id, j.ID, runErr)
 			report(client, id, j.ID, false, runErr.Error())
@@ -125,5 +144,63 @@ func report(client *http.Client, workerID, jobID string, success bool, errMsg st
 	}
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("worker %s: unexpected status %d reporting job %s", workerID, resp.StatusCode, jobID)
+	}
+}
+
+
+// renew extends this worker's lease on a job. It returns false if the
+// lease is gone, which means the job was reaped and reassigned while we
+// were still working on it.
+func renew(client *http.Client, workerID, jobID string) bool {
+	body, err := json.Marshal(map[string]string{
+		"job_id":    jobID,
+		"worker_id": workerID,
+	})
+	if err != nil {
+		return false
+	}
+
+	resp, err := client.Post(*serverURL+"/renew", "application/json", bytes.NewReader(body))
+	if err != nil {
+		// a transient network error shouldn't abandon the job; the next
+		// heartbeat may well succeed before the lease actually expires
+		log.Printf("worker %s: renew request failed for %s: %v", workerID, jobID, err)
+		return true
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK
+}
+
+
+// heartbeat renews the lease every interval until stop is closed.
+// If a renewal shows the lease is lost, it closes lost so the caller
+// can discard the result.
+func heartbeat(client *http.Client, workerID, jobID string, interval time.Duration, stop <-chan struct{}, lost chan<- struct{}) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			if !renew(client, workerID, jobID) {
+				log.Printf("worker %s: lost lease on %s mid-execution", workerID, jobID)
+				close(lost)
+				return
+			}
+		}
+	}
+}
+
+
+
+// slowHandler simulates long-running work, so a worker can be killed
+// mid-job to test lease expiry and reassignment.
+func slowHandler(d time.Duration) job.Handler {
+	return func(j *job.Job) error {
+		time.Sleep(d)
+		return nil
 	}
 }

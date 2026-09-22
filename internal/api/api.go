@@ -43,12 +43,20 @@ type CompleteRequest struct {
 	Error    string `json:"error,omitempty"`
 }
 
+// RenewRequest is the body accepted by POST /renew.
+type RenewRequest struct {
+	JobID    string `json:"job_id"`
+	WorkerID string `json:"worker_id"`
+}
+
+
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/jobs", s.handleJobs)   // POST to submit, GET to list
 	mux.HandleFunc("/jobs/", s.handleJobByID) // GET /jobs/{id}
 	mux.HandleFunc("/lease", s.handleLease)
+	mux.HandleFunc("/renew", s.handleRenew)
 	mux.HandleFunc("/complete", s.handleComplete)
 	return mux
 }
@@ -177,6 +185,39 @@ func (s *Server) handleComplete(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		log.Printf("api: complete failed for job %s: %v", req.JobID, err)
 		writeError(w, http.StatusInternalServerError, "failed to complete job")
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}
+
+// handleRenew extends a worker's lease on a job it is still running.
+// A 409 tells the worker its lease was already reaped and the job
+// reassigned, so it should stop working and discard its result.
+func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req RenewRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.JobID == "" || req.WorkerID == "" {
+		writeError(w, http.StatusBadRequest, "job_id and worker_id are required")
+		return
+	}
+
+	err := s.store.Renew(req.JobID, req.WorkerID, s.leaseDuration)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "job not found")
+	case errors.Is(err, store.ErrLeaseLost):
+		writeError(w, http.StatusConflict, "lease no longer held")
+	case err != nil:
+		log.Printf("api: renew failed for job %s: %v", req.JobID, err)
+		writeError(w, http.StatusInternalServerError, "failed to renew lease")
 	default:
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
