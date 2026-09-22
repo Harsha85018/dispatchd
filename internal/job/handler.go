@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"math/rand"
 	"time"
+	"context"
 )
 
-// Handler executes a job of a particular type.
-// Returning an error marks the attempt as failed.
-type Handler func(j *Job) error
+// Handler executes a job of a particular type. The context is cancelled if
+// the worker loses its lease, so handlers should abandon work when it fires
+// rather than finishing something nobody will accept.
+type Handler func(ctx context.Context, j *Job) error
 
 // Registry maps job types to their handlers.
 type Registry struct {
@@ -32,8 +34,15 @@ func (r *Registry) Get(jobType string) (Handler, bool) {
 // short random duration and fails with the given probability, so we can
 // exercise retry and failure paths before real work is plugged in.
 func SimulatedHandler(failureRate float64) Handler {
-	return func(j *Job) error {
-		time.Sleep(time.Duration(50+rand.Intn(150)) * time.Millisecond)
+	return func(ctx context.Context, j *Job) error {
+		delay := time.Duration(50+rand.Intn(150)) * time.Millisecond
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+
 		if rand.Float64() < failureRate {
 			return fmt.Errorf("simulated failure executing job %s", j.ID)
 		}

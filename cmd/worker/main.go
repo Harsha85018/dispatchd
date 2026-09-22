@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"time"
+	"context"
 
 	"github.com/Harsha85018/dispatchd/internal/job"
 )
@@ -59,14 +60,17 @@ func main() {
 			continue
 		}
 
-		// heartbeat the lease while the handler runs, so long jobs
-		// aren't reaped out from under a healthy worker
+		// heartbeat the lease while the handler runs. If the lease is lost,
+		// the heartbeat cancels ctx so the handler stops work it can no
+		// longer report.
+		ctx, cancel := context.WithCancel(context.Background())
 		stop := make(chan struct{})
 		lost := make(chan struct{})
-		go heartbeat(client, id, j.ID, j.LeaseToken, *heartbeatInterval, stop, lost)
-		
-		runErr := handler(j)
+		go heartbeat(client, id, j.ID, j.LeaseToken, *heartbeatInterval, stop, cancel, lost)
+
+		runErr := handler(ctx, j)
 		close(stop)
+		cancel() // always release the context, success or not
 
 		// if the lease was lost mid-execution, the job has already been
 		// reassigned — reporting now would be a stale write
@@ -181,7 +185,7 @@ func renew(client *http.Client, workerID, jobID, token string) bool {
 // heartbeat renews the lease every interval until stop is closed.
 // If a renewal shows the lease is lost, it closes lost so the caller
 // can discard the result.
-func heartbeat(client *http.Client, workerID, jobID, token string, interval time.Duration, stop <-chan struct{}, lost chan<- struct{}) {
+func heartbeat(client *http.Client, workerID, jobID, token string, interval time.Duration, stop <-chan struct{}, cancel context.CancelFunc, lost chan<- struct{}) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -191,8 +195,9 @@ func heartbeat(client *http.Client, workerID, jobID, token string, interval time
 			return
 		case <-ticker.C:
 			if !renew(client, workerID, jobID, token) {
-				log.Printf("worker %s: lost lease on %s mid-execution", workerID, jobID)
+				log.Printf("worker %s: lost lease on %s, cancelling work", workerID, jobID)
 				close(lost)
+				cancel()
 				return
 			}
 		}
@@ -204,8 +209,12 @@ func heartbeat(client *http.Client, workerID, jobID, token string, interval time
 // slowHandler simulates long-running work, so a worker can be killed
 // mid-job to test lease expiry and reassignment.
 func slowHandler(d time.Duration) job.Handler {
-	return func(j *job.Job) error {
-		time.Sleep(d)
-		return nil
+	return func(ctx context.Context, j *job.Job) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(d):
+			return nil
+		}
 	}
 }
