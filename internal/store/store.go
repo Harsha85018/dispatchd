@@ -22,6 +22,7 @@ type Store struct {
 	jobs     map[string]*job.Job
 	walFile  *os.File
 	walPath  string
+	pending  map[string]bool // ids of jobs in pending state, for O(1) lease lookup
 }
 
 // walEntry is a single record appended to the write-ahead log.
@@ -40,6 +41,7 @@ func NewStore(walPath string) (*Store, error) {
 
 	s := &Store{
 		jobs:    make(map[string]*job.Job),
+		pending: make(map[string]bool),
 		walFile: f,
 		walPath: walPath,
 	}
@@ -71,6 +73,7 @@ func (s *Store) replay() error {
 		}
 		if entry.Op == "put" {
 			s.jobs[entry.Job.ID] = entry.Job
+			s.syncPending(entry.Job)
 		}
 	}
 	return scanner.Err()
@@ -89,6 +92,7 @@ func (s *Store) Put(j *job.Job) error {
 
 	cp := *j
 	s.jobs[j.ID] = &cp
+	s.syncPending(&cp)
 	return nil
 }
 
@@ -107,6 +111,16 @@ func (s *Store) appendWAL(j *job.Job) error {
 		return err
 	}
 	return s.walFile.Sync()
+}
+
+// syncPending keeps the pending index in step with a job's status.
+// The caller must hold s.mu.
+func (s *Store) syncPending(j *job.Job) {
+	if j.Status == job.StatusPending {
+		s.pending[j.ID] = true
+	} else {
+		delete(s.pending, j.ID)
+	}
 }
 
 // Get returns a copy of the job with the given ID, or nil if it doesn't exist.

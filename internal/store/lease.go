@@ -12,23 +12,20 @@ import (
 // marks it leased to workerID for the given duration, and returns a copy.
 // Returns nil if no job is currently available.
 //
-// The whole operation happens under the write lock, so two workers polling
-// concurrently can never be handed the same job.
+// Candidates come from the pending index rather than a scan of every job,
+// so lease cost tracks the number of pending jobs, not the size of the store.
 func (s *Store) Lease(workerID string, duration time.Duration) (*job.Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// snapshot statuses for dependency checks
-	statusByID := make(map[string]job.Status, len(s.jobs))
-	for id, j := range s.jobs {
-		statusByID[id] = j.Status
-	}
-
-	for _, j := range s.jobs {
-		if j.Status != job.StatusPending {
+	for id := range s.pending {
+		j, ok := s.jobs[id]
+		if !ok || j.Status != job.StatusPending {
+			// index disagrees with the job map; drop the stale entry
+			delete(s.pending, id)
 			continue
 		}
-		if !dependenciesSatisfied(j, statusByID) {
+		if !s.dependenciesMet(j) {
 			continue
 		}
 
@@ -49,6 +46,7 @@ func (s *Store) Lease(workerID string, duration time.Duration) (*job.Job, error)
 		if err := s.appendWAL(j); err != nil {
 			return nil, err
 		}
+		s.syncPending(j)
 
 		cp := *j
 		return &cp, nil
@@ -89,6 +87,7 @@ func (s *Store) Complete(id, workerID, token string, success bool, errMsg string
 		j.Error = errMsg
 	}
 
+	s.syncPending(j)
 	return s.appendWAL(j)
 }
 
@@ -123,16 +122,21 @@ func (s *Store) ReapExpired() ([]string, error) {
 		if err := s.appendWAL(j); err != nil {
 			return reaped, err
 		}
+		s.syncPending(j)
 		reaped = append(reaped, j.ID)
 	}
 
 	return reaped, nil
 }
 
-func dependenciesSatisfied(j *job.Job, statusByID map[string]job.Status) bool {
+// dependenciesMet reports whether every job this one depends on has
+// succeeded. A dependency that doesn't exist counts as unmet, so a job
+// never runs before its prerequisites are actually present.
+// The caller must hold s.mu.
+func (s *Store) dependenciesMet(j *job.Job) bool {
 	for _, depID := range j.DependsOn {
-		status, ok := statusByID[depID]
-		if !ok || status != job.StatusSucceeded {
+		dep, ok := s.jobs[depID]
+		if !ok || dep.Status != job.StatusSucceeded {
 			return false
 		}
 	}
