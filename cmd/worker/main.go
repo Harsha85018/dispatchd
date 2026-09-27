@@ -35,6 +35,7 @@ func main() {
 	registry.Register("transform", job.SimulatedHandler(0.3))
 	registry.Register("load", job.SimulatedHandler(0.0))
 	registry.Register("slow", slowHandler(30*time.Second))
+	registry.Register("noop", func(ctx context.Context, j *job.Job) error { return nil })
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	log.Printf("worker %s started, polling %s", id, *serverURL)
