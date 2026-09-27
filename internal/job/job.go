@@ -17,14 +17,14 @@ const (
 // Job represents a single unit of work to be scheduled and executed.
 type Job struct {
 	ID          string            `json:"id"`
-	Type        string            `json:"type"`         // identifies which handler should run this job
-	Payload     map[string]string `json:"payload"`       // arbitrary key-value input for the job
+	Type        string            `json:"type"`    // identifies which handler should run this job
+	Payload     map[string]string `json:"payload"` // arbitrary key-value input for the job
 	Status      Status            `json:"status"`
-	DependsOn   []string          `json:"depends_on"`    // job IDs that must succeed before this one runs
+	DependsOn   []string          `json:"depends_on"` // job IDs that must succeed before this one runs
 	Attempts    int               `json:"attempts"`
-	LeasedBy    string    `json:"leased_by,omitempty"`
-	LeaseToken  string    `json:"lease_token,omitempty"`
-	LeaseExpiry *time.Time `json:"lease_expiry,omitempty"`
+	LeasedBy    string            `json:"leased_by,omitempty"`
+	LeaseToken  string            `json:"lease_token,omitempty"`
+	LeaseExpiry *time.Time        `json:"lease_expiry,omitempty"`
 	MaxAttempts int               `json:"max_attempts"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`

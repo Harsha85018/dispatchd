@@ -1,0 +1,13 @@
+global:
+  # Aggressive, because load test runs last only seconds — at the default
+  # 15s a whole run would be two or three data points.
+  scrape_interval: 2s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: dispatchd
+    static_configs:
+      - targets:
+          - server1:8080
+          - server2:8080
+          - server3:8080

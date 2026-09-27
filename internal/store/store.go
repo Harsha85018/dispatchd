@@ -3,9 +3,9 @@ package store
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"sync"
-	"errors"
 
 	"github.com/Harsha85018/dispatchd/internal/job"
 )
@@ -14,15 +14,16 @@ var (
 	ErrNotFound  = errors.New("job not found")
 	ErrLeaseLost = errors.New("lease no longer held by this worker")
 )
+
 // Store is a durable, WAL-backed store for jobs.
 // Every mutation is appended to a log file before being applied in memory,
 // so state can be rebuilt by replaying the log after a crash.
 type Store struct {
-	mu       sync.RWMutex
-	jobs     map[string]*job.Job
-	walFile  *os.File
-	walPath  string
-	pending  map[string]bool // ids of jobs in pending state, for O(1) lease lookup
+	mu      sync.RWMutex
+	jobs    map[string]*job.Job
+	walFile *os.File
+	walPath string
+	pending map[string]bool // ids of jobs in pending state, for O(1) lease lookup
 }
 
 // walEntry is a single record appended to the write-ahead log.
@@ -96,7 +97,6 @@ func (s *Store) Put(j *job.Job) error {
 	return nil
 }
 
-
 // appendWAL writes the job to the log and fsyncs. The caller must already
 // hold s.mu. The in-memory map is assumed to already reference this job.
 func (s *Store) appendWAL(j *job.Job) error {
@@ -153,4 +153,16 @@ func (s *Store) All() []*job.Job {
 // Close closes the underlying WAL file.
 func (s *Store) Close() error {
 	return s.walFile.Close()
+}
+
+// StatusCounts returns how many jobs sit in each status.
+func (s *Store) StatusCounts() (map[string]int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make(map[string]int)
+	for _, j := range s.jobs {
+		out[string(j.Status)]++
+	}
+	return out, nil
 }

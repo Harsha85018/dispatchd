@@ -2,14 +2,17 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
-	"errors"
-	"os"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/Harsha85018/dispatchd/internal/job"
+	"github.com/Harsha85018/dispatchd/internal/metrics"
 	"github.com/Harsha85018/dispatchd/internal/store"
 )
 
@@ -35,7 +38,6 @@ func NewServer(s JobStore, leaseDuration time.Duration) *Server {
 	return &Server{store: s, leaseDuration: leaseDuration, hostname: host}
 }
 
-
 // SubmitRequest is the body accepted by POST /jobs.
 type SubmitRequest struct {
 	ID          string            `json:"id"`
@@ -52,32 +54,39 @@ type LeaseRequest struct {
 
 // CompleteRequest is the body accepted by POST /complete.
 type CompleteRequest struct {
-	JobID    string `json:"job_id"`
-	WorkerID string `json:"worker_id"`
+	JobID      string `json:"job_id"`
+	WorkerID   string `json:"worker_id"`
 	LeaseToken string `json:"lease_token"`
-	Success  bool   `json:"success"`
-	Error    string `json:"error,omitempty"`
+	Success    bool   `json:"success"`
+	Error      string `json:"error,omitempty"`
 }
 
 // RenewRequest is the body accepted by POST /renew.
 type RenewRequest struct {
-	JobID    string `json:"job_id"`
-	WorkerID string `json:"worker_id"`
+	JobID      string `json:"job_id"`
+	WorkerID   string `json:"worker_id"`
 	LeaseToken string `json:"lease_token"`
 }
 
-
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", s.handleHealth)
-	mux.HandleFunc("/jobs", s.handleJobs)   // POST to submit, GET to list
-	mux.HandleFunc("/jobs/", s.handleJobByID) // GET /jobs/{id}
-	mux.HandleFunc("/lease", s.handleLease)
-	mux.HandleFunc("/renew", s.handleRenew)
-	mux.HandleFunc("/complete", s.handleComplete)
+
+	// The path label is a constant per route, so /jobs/{id} stays one time
+	// series instead of becoming one per job id.
+	mux.HandleFunc("/healthz", metrics.Instrument("/healthz", s.handleHealth))
+	mux.HandleFunc("/jobs", metrics.Instrument("/jobs", s.handleJobs))
+	mux.HandleFunc("/jobs/", metrics.Instrument("/jobs/{id}", s.handleJobByID))
+	mux.HandleFunc("/lease", metrics.Instrument("/lease", s.handleLease))
+	mux.HandleFunc("/renew", metrics.Instrument("/renew", s.handleRenew))
+	mux.HandleFunc("/complete", metrics.Instrument("/complete", s.handleComplete))
+
+	mux.Handle("/metrics", promhttp.Handler())
+
 	return mux
 }
 
+// handleHealth reports liveness and which replica answered, which is how
+// load-balancer distribution can be checked from outside.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
@@ -122,6 +131,7 @@ func (s *Server) submitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	metrics.JobsSubmitted.Inc()
 	writeJSON(w, http.StatusCreated, j)
 }
 
@@ -174,6 +184,7 @@ func (s *Server) handleLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	metrics.JobsLeased.Inc()
 	writeJSON(w, http.StatusOK, j)
 }
 
@@ -199,13 +210,19 @@ func (s *Server) handleComplete(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "job not found")
 	case errors.Is(err, store.ErrLeaseLost):
-		// the lease expired and the job was reassigned — the worker's
-		// result is stale and must be discarded
+		// The lease expired and the job was reassigned, so this worker's
+		// result is stale and must be discarded.
+		metrics.LeasesLost.Inc()
 		writeError(w, http.StatusConflict, "lease no longer held")
 	case err != nil:
 		log.Printf("api: complete failed for job %s: %v", req.JobID, err)
 		writeError(w, http.StatusInternalServerError, "failed to complete job")
 	default:
+		outcome := "error"
+		if req.Success {
+			outcome = "success"
+		}
+		metrics.JobsCompleted.WithLabelValues(outcome).Inc()
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
@@ -234,15 +251,16 @@ func (s *Server) handleRenew(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "job not found")
 	case errors.Is(err, store.ErrLeaseLost):
+		metrics.LeasesLost.Inc()
 		writeError(w, http.StatusConflict, "lease no longer held")
 	case err != nil:
 		log.Printf("api: renew failed for job %s: %v", req.JobID, err)
 		writeError(w, http.StatusInternalServerError, "failed to renew lease")
 	default:
+		metrics.LeasesRenewed.Inc()
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}
 }
-
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")

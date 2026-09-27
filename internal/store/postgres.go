@@ -23,7 +23,6 @@ type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
-
 // Advisory lock key for schema setup. CREATE TABLE IF NOT EXISTS is not
 // atomic against concurrent callers: several replicas starting together
 // can each find the table missing and each try to create it, and the
@@ -31,7 +30,6 @@ type PostgresStore struct {
 // lock across migration serializes that, so exactly one replica creates
 // the schema and the rest find it already there.
 const schemaLockKey int64 = 0x6469737061746368 // "dispatch"
-
 
 func NewPostgresStore(ctx context.Context, dsn string) (*PostgresStore, error) {
 	pool, err := pgxpool.New(ctx, dsn)
@@ -303,4 +301,25 @@ func nullable(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// StatusCounts returns how many jobs sit in each status.
+func (s *PostgresStore) StatusCounts() (map[string]int, error) {
+	rows, err := s.pool.Query(context.Background(),
+		`SELECT status, count(*) FROM jobs GROUP BY status`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]int)
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, err
+		}
+		out[status] = n
+	}
+	return out, rows.Err()
 }

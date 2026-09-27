@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,15 +10,14 @@ import (
 	"net/http"
 	"os"
 	"time"
-	"context"
 
 	"github.com/Harsha85018/dispatchd/internal/job"
 )
 
 var (
-	serverURL = flag.String("server", "http://localhost:8080", "dispatchd server URL")
-	workerID  = flag.String("id", "", "unique worker id (defaults to hostname+pid)")
-	pollWait  = flag.Duration("poll", 500*time.Millisecond, "how long to wait when no work is available")
+	serverURL         = flag.String("server", "http://localhost:8080", "dispatchd server URL")
+	workerID          = flag.String("id", "", "unique worker id (defaults to hostname+pid)")
+	pollWait          = flag.Duration("poll", 500*time.Millisecond, "how long to wait when no work is available")
 	heartbeatInterval = flag.Duration("heartbeat", 3*time.Second, "how often to renew the lease while running a job")
 )
 
@@ -153,7 +153,6 @@ func report(client *http.Client, workerID, jobID, token string, success bool, er
 	}
 }
 
-
 // renew extends this worker's lease on a job. It returns false if the
 // lease is gone, which means the job was reaped and reassigned while we
 // were still working on it.
@@ -182,7 +181,6 @@ func renew(client *http.Client, workerID, jobID, token string) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-
 // heartbeat renews the lease every interval until stop is closed.
 // If a renewal shows the lease is lost, it closes lost so the caller
 // can discard the result.
@@ -204,8 +202,6 @@ func heartbeat(client *http.Client, workerID, jobID, token string, interval time
 		}
 	}
 }
-
-
 
 // slowHandler simulates long-running work, so a worker can be killed
 // mid-job to test lease expiry and reassignment.

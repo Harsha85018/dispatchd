@@ -1,9 +1,9 @@
 package store
 
 import (
-	"time"
 	"crypto/rand"
 	"encoding/hex"
+	"time"
 
 	"github.com/Harsha85018/dispatchd/internal/job"
 )

@@ -24,6 +24,7 @@ type jobStore interface {
 	Complete(id, workerID, token string, success bool, errMsg string) error
 	ReapExpired() ([]string, error)
 	Close() error
+	StatusCounts() (map[string]int, error)
 }
 
 var (
@@ -56,6 +57,7 @@ func main() {
 
 	done := make(chan struct{})
 	go scheduler.RunReaper(s, *reaperInterval, done)
+	go scheduler.RunStatusSampler(s, 2*time.Second, done)
 
 	srv := api.NewServer(s, *leaseDuration)
 	log.Println("dispatchd server listening on :8080")

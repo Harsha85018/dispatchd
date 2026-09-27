@@ -1,10 +1,10 @@
 package job
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"time"
-	"context"
 )
 
 // Handler executes a job of a particular type. The context is cancelled if
