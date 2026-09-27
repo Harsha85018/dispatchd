@@ -9,3 +9,6 @@ dispatchd
 # macOS
 .DS_Store
 
+
+# stray tooling files
+.Rhistory
