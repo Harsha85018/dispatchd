@@ -16,12 +16,12 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(dispatchd_jobs_completed_total[1m])) by (outcome)",
+          "expr": "sum(rate(dispatchd_jobs_completed_total[15s])) by (outcome)",
           "legendFormat": "{{outcome}}"
         },
         {
           "refId": "B",
-          "expr": "sum(rate(dispatchd_jobs_submitted_total[1m]))",
+          "expr": "sum(rate(dispatchd_jobs_submitted_total[15s]))",
           "legendFormat": "submitted"
         }
       ]
@@ -51,17 +51,17 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.50, sum(rate(dispatchd_http_request_duration_seconds_bucket{path=\"/lease\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(dispatchd_http_request_duration_seconds_bucket{path=\"/lease\"}[15s])) by (le))",
           "legendFormat": "p50"
         },
         {
           "refId": "B",
-          "expr": "histogram_quantile(0.95, sum(rate(dispatchd_http_request_duration_seconds_bucket{path=\"/lease\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(dispatchd_http_request_duration_seconds_bucket{path=\"/lease\"}[15s])) by (le))",
           "legendFormat": "p95"
         },
         {
           "refId": "C",
-          "expr": "histogram_quantile(0.99, sum(rate(dispatchd_http_request_duration_seconds_bucket{path=\"/lease\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(dispatchd_http_request_duration_seconds_bucket{path=\"/lease\"}[15s])) by (le))",
           "legendFormat": "p99"
         }
       ]
@@ -76,12 +76,12 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(dispatchd_http_requests_total{path=\"/lease\",status=\"200\"}[1m]))",
+          "expr": "sum(rate(dispatchd_http_requests_total{path=\"/lease\",status=\"200\"}[15s]))",
           "legendFormat": "work handed out"
         },
         {
           "refId": "B",
-          "expr": "sum(rate(dispatchd_http_requests_total{path=\"/lease\",status=\"204\"}[1m]))",
+          "expr": "sum(rate(dispatchd_http_requests_total{path=\"/lease\",status=\"204\"}[15s]))",
           "legendFormat": "empty poll"
         }
       ]
@@ -96,17 +96,17 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(dispatchd_leases_reaped_total[1m]))",
+          "expr": "sum(rate(dispatchd_leases_reaped_total[15s]))",
           "legendFormat": "reaped"
         },
         {
           "refId": "B",
-          "expr": "sum(rate(dispatchd_leases_lost_total[1m]))",
+          "expr": "sum(rate(dispatchd_leases_lost_total[15s]))",
           "legendFormat": "lost (stale result rejected)"
         },
         {
           "refId": "C",
-          "expr": "sum(rate(dispatchd_leases_renewed_total[1m]))",
+          "expr": "sum(rate(dispatchd_leases_renewed_total[15s]))",
           "legendFormat": "renewed"
         }
       ]
@@ -120,7 +120,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(dispatchd_http_requests_total[1m])) by (path)",
+          "expr": "sum(rate(dispatchd_http_requests_total[15s])) by (path)",
           "legendFormat": "{{path}}"
         }
       ]
