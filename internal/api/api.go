@@ -12,12 +12,23 @@ import (
 	"github.com/Harsha85018/dispatchd/internal/store"
 )
 
+// JobStore is the subset of store behavior the API needs. Both the
+// file-backed and Postgres stores satisfy it.
+type JobStore interface {
+	Put(j *job.Job) error
+	Get(id string) *job.Job
+	All() []*job.Job
+	Lease(workerID string, duration time.Duration) (*job.Job, error)
+	Renew(id, workerID, token string, duration time.Duration) error
+	Complete(id, workerID, token string, success bool, errMsg string) error
+}
+
 type Server struct {
-	store         *store.Store
+	store         JobStore
 	leaseDuration time.Duration
 }
 
-func NewServer(s *store.Store, leaseDuration time.Duration) *Server {
+func NewServer(s JobStore, leaseDuration time.Duration) *Server {
 	return &Server{store: s, leaseDuration: leaseDuration}
 }
 

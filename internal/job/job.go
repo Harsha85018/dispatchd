@@ -34,6 +34,16 @@ type Job struct {
 // NewJob creates a new job in the pending state.
 func NewJob(id, jobType string, payload map[string]string, dependsOn []string, maxAttempts int) *Job {
 	now := time.Now().UTC()
+
+	// Normalize nil to empty so storage backends that reject NULL
+	// (Postgres) get a valid value for these columns.
+	if payload == nil {
+		payload = map[string]string{}
+	}
+	if dependsOn == nil {
+		dependsOn = []string{}
+	}
+
 	return &Job{
 		ID:          id,
 		Type:        jobType,

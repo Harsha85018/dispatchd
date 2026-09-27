@@ -3,14 +3,19 @@ package scheduler
 import (
 	"log"
 	"time"
-
-	"github.com/Harsha85018/dispatchd/internal/store"
 )
+
+
+// Reaper needs only this much of a store.
+type Reaper interface {
+	ReapExpired() ([]string, error)
+}
+
 
 // RunReaper periodically requeues jobs whose leases have expired.
 // Without this, a job held by a worker that crashed would stay
 // leased forever and never run again.
-func RunReaper(s *store.Store, interval time.Duration, done <-chan struct{}) {
+func RunReaper(s Reaper, interval time.Duration, done <-chan struct{}) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
