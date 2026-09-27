@@ -1,0 +1,27 @@
+services:
+  server:
+    build: .
+    command: ["/app/server", "-lease", "30s"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - wal:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    build: .
+    command: ["/app/worker", "-server", "http://server:8080"]
+    depends_on:
+      server:
+        condition: service_healthy
+    # no fixed id: each replica derives one from its hostname and pid,
+    # so `--scale worker=N` gives N distinct workers
+    deploy:
+      replicas: 2
+
+volumes:
+  wal:

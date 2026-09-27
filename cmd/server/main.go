@@ -14,11 +14,12 @@ import (
 var (
 	leaseDuration  = flag.Duration("lease", 10*time.Second, "how long a lease is valid")
 	reaperInterval = flag.Duration("reaper", 2*time.Second, "how often to reap expired leases")
+	walPath = flag.String("wal", "dispatchd.wal", "path to the write-ahead log")
 )
 
 func main() {
 	flag.Parse()
-	s, err := store.NewStore("dispatchd.wal")
+	s, err := store.NewStore(*walPath)
 	if err != nil {
 		log.Fatalf("failed to open store: %v", err)
 	}
