@@ -13,11 +13,18 @@ services:
       timeout: 3s
       retries: 10
 
-  server:
+  # Three independent server processes sharing one database. Named
+  # explicitly rather than scaled, so the load balancer can address them
+  # stably and one can be killed by name to test failover.
+  server1: &server
     build: .
     command: ["/app/server", "-lease", "30s", "-db", "postgres://dispatchd:dispatchd@postgres:5432/dispatchd"]
-    ports:
-      - "8080:8080"
+    networks:
+      default:
+        # All three replicas answer to this name, so Docker DNS hands
+        # workers a different one each time and the hot path skips the proxy.
+        aliases:
+          - servers
     depends_on:
       postgres:
         condition: service_healthy
@@ -27,14 +34,31 @@ services:
       timeout: 3s
       retries: 5
 
+  server2: *server
+  server3: *server
+
+  lb:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      server1:
+        condition: service_healthy
+      server2:
+        condition: service_healthy
+      server3:
+        condition: service_healthy
+
   worker:
     build: .
-    command: ["/app/worker", "-server", "http://server:8080"]
+    command: ["/app/worker", "-server", "http://servers:8080"]
     depends_on:
-      server:
-        condition: service_healthy
+      lb:
+        condition: service_started
     deploy:
-      replicas: 2
+      replicas: 6
 
 volumes:
   pgdata:

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"errors"
+	"os"
 
 	"github.com/Harsha85018/dispatchd/internal/job"
 	"github.com/Harsha85018/dispatchd/internal/store"
@@ -26,11 +27,14 @@ type JobStore interface {
 type Server struct {
 	store         JobStore
 	leaseDuration time.Duration
+	hostname      string
 }
 
 func NewServer(s JobStore, leaseDuration time.Duration) *Server {
-	return &Server{store: s, leaseDuration: leaseDuration}
+	host, _ := os.Hostname()
+	return &Server{store: s, leaseDuration: leaseDuration, hostname: host}
 }
+
 
 // SubmitRequest is the body accepted by POST /jobs.
 type SubmitRequest struct {
@@ -75,7 +79,10 @@ func (s *Server) Routes() http.Handler {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "ok",
+		"server": s.hostname,
+	})
 }
 
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {

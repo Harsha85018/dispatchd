@@ -23,6 +23,16 @@ type PostgresStore struct {
 	pool *pgxpool.Pool
 }
 
+
+// Advisory lock key for schema setup. CREATE TABLE IF NOT EXISTS is not
+// atomic against concurrent callers: several replicas starting together
+// can each find the table missing and each try to create it, and the
+// losers fail with a unique violation in pg_catalog. Holding one advisory
+// lock across migration serializes that, so exactly one replica creates
+// the schema and the rest find it already there.
+const schemaLockKey int64 = 0x6469737061746368 // "dispatch"
+
+
 func NewPostgresStore(ctx context.Context, dsn string) (*PostgresStore, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
@@ -32,11 +42,31 @@ func NewPostgresStore(ctx context.Context, dsn string) (*PostgresStore, error) {
 		pool.Close()
 		return nil, err
 	}
-	if _, err := pool.Exec(ctx, schemaSQL); err != nil {
+	if err := migrate(ctx, pool); err != nil {
 		pool.Close()
 		return nil, err
 	}
 	return &PostgresStore{pool: pool}, nil
+}
+
+// migrate applies the schema under an advisory lock so concurrent
+// replicas can't race each other creating the same objects. The lock is
+// transaction-scoped, so it is released on commit or rollback with no
+// chance of leaking if this replica dies mid-migration.
+func migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) // no-op once Commit succeeds
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, schemaLockKey); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, schemaSQL); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PostgresStore) Close() error {

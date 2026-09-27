@@ -138,6 +138,19 @@ func report(jobs []jobState, submitElapsed, drainElapsed time.Duration) {
 	}
 
 	sort.Slice(latencies, func(a, b int) bool { return latencies[a] < latencies[b] })
+	// Wall-clock span of the run: earliest submission to latest completion.
+	// Execution overlaps submission, so dividing total jobs by the
+	// post-submit window alone overstates throughput.
+	first, last := jobs[0].CreatedAt, jobs[0].UpdatedAt
+	for _, j := range jobs {
+		if j.CreatedAt.Before(first) {
+			first = j.CreatedAt
+		}
+		if j.UpdatedAt.After(last) {
+			last = j.UpdatedAt
+		}
+	}
+	span := last.Sub(first)
 
 	fmt.Println()
 	fmt.Println("=== dispatchd load test ===")
@@ -145,8 +158,10 @@ func report(jobs []jobState, submitElapsed, drainElapsed time.Duration) {
 	fmt.Printf("total attempts:  %d\n", totalAttempts)
 	fmt.Printf("submit time:     %v (%.0f jobs/sec)\n",
 		submitElapsed.Round(time.Millisecond), float64(len(jobs))/submitElapsed.Seconds())
-	fmt.Printf("drain time:      %v (%.0f jobs/sec)\n",
-		drainElapsed.Round(time.Millisecond), float64(len(jobs))/drainElapsed.Seconds())
+	fmt.Printf("drain window:    %v (post-submit only, not a throughput figure)\n",
+		drainElapsed.Round(time.Millisecond))
+	fmt.Printf("sustained:       %v span, %.0f jobs/sec end-to-end\n",
+		span.Round(time.Millisecond), float64(len(jobs))/span.Seconds())
 	fmt.Println()
 	fmt.Println("end-to-end latency (submit -> terminal state):")
 	fmt.Printf("  p50:  %v\n", percentile(latencies, 50).Round(time.Millisecond))
