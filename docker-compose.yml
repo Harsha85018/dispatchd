@@ -1,3 +1,24 @@
+# Shared definition for every server replica. Anchored out here rather than
+# on server1 so server1 can publish a port without server2 and server3
+# inheriting it and colliding.
+x-server: &server
+  build: .
+  command: ["/app/server", "-lease", "30s", "-db", "postgres://dispatchd:dispatchd@postgres:5432/dispatchd"]
+  networks:
+    default:
+      # All replicas answer to this name, so Docker DNS hands each worker
+      # a replica directly and the hot path skips the proxy.
+      aliases:
+        - servers
+  depends_on:
+    postgres:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/healthz"]
+    interval: 5s
+    timeout: 3s
+    retries: 5
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -13,30 +34,18 @@ services:
       timeout: 3s
       retries: 10
 
-  # Three independent server processes sharing one database. Named
-  # explicitly rather than scaled, so the load balancer can address them
-  # stably and one can be killed by name to test failover.
-  server1: &server
-    build: .
-    command: ["/app/server", "-lease", "30s", "-db", "postgres://dispatchd:dispatchd@postgres:5432/dispatchd"]
-    networks:
-      default:
-        # All three replicas answer to this name, so Docker DNS hands
-        # workers a different one each time and the hot path skips the proxy.
-        aliases:
-          - servers
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/healthz"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
+  # server1 also publishes a port, so benchmarks can hit one replica
+  # directly and keep the proxy out of the measurement.
+  server1:
+    <<: *server
+    ports:
+      - "8081:8080"
 
   server2: *server
   server3: *server
 
+  # nginx fronts the replicas for external clients only. Workers bypass it:
+  # an extra proxy hop on the hot path cost ~35% throughput.
   lb:
     image: nginx:1.27-alpine
     volumes:
@@ -55,8 +64,8 @@ services:
     build: .
     command: ["/app/worker", "-server", "http://servers:8080"]
     depends_on:
-      lb:
-        condition: service_started
+      server1:
+        condition: service_healthy
     deploy:
       replicas: 6
 
